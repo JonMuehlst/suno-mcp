@@ -7,11 +7,13 @@ generation capabilities to compatible clients like Claude Desktop.
 
 import asyncio
 import traceback
-import asyncio
-import traceback
-import io # Added for type hinting if needed elsewhere
-from mcp.server.fastmcp import FastMCP, Context, Image
-from mcp.server.models import ToolInputSchema, ToolParameter
+import io
+from typing import Optional, AsyncIterator, List, Dict, Any # Added for type hints
+from urllib.parse import urlparse # Added for URI parsing
+
+from mcp.server.fastmcp import FastMCP, Context, Resource # Updated import
+# ToolInputSchema/ToolParameter are not needed if using docstrings for schema generation
+# from mcp.server.models import ToolInputSchema, ToolParameter
 
 from src import config # Loads .env automatically
 from src.suno_api import SunoAdapter, SunoApiException
@@ -21,27 +23,21 @@ from src.audio_handler import download_audio # Updated import
 # Initialize FastMCP server
 mcp = FastMCP(
     name="Suno AI Music Generator",
-    version="0.1.0",
-    description="Generates music using the unofficial Suno AI API.",
-    # Define dependencies needed if installed via `mcp install`
-    dependencies=[
-        "httpx>=0.27.0",
-        "python-2captcha-solver>=1.0.5",
-        "pydub>=0.25.1",
-        "python-dotenv>=1.0.0",
-        # Add mcp itself if not implicitly included by the installer
-        "mcp[cli]>=1.6.0"
-    ]
+    version="0.1.0-mvp",
+    description="Generates music using the Suno AI API via MCP.",
+    # Dependencies are managed via requirements.txt
 )
 
 # --- Lifespan Management (Optional but Recommended) ---
-# Use lifespan to manage the SunoAdapter client lifecycle
+# --- Server Context for Lifespan ---
 class ServerContext:
+    """Holds resources needed during the server's lifespan."""
     def __init__(self):
-        self.suno_client: SunoAdapter | None = None # Changed type hint
+        self.suno_client: Optional[SunoAdapter] = None
 
+# --- Lifespan Management ---
 @mcp.lifespan()
-async def lifespan_manager(server: FastMCP) -> asyncio.AsyncIterator[ServerContext]:
+async def lifespan_manager(server: FastMCP) -> AsyncIterator[ServerContext]:
     """Manages the SunoAdapter client lifecycle."""
     print("MCP Server Lifespan: Initializing Suno API adapter...")
     app_context = ServerContext()
@@ -78,139 +74,260 @@ async def lifespan_manager(server: FastMCP) -> asyncio.AsyncIterator[ServerConte
 
 # --- MCP Tools ---
 
-@mcp.tool(
-    name="generate_music",
-    description="Generates a short music clip based on a text prompt using Suno AI.",
-    input_schema=ToolInputSchema(
-        parameters=[
-            ToolParameter(name="prompt", description="Detailed description of the music (e.g., '80s synthwave, retrofuturistic, driving beat').", type="string", required=True),
-            ToolParameter(name="instrumental", description="Set to true to generate instrumental music only.", type="boolean", required=False, default=False),
-            ToolParameter(name="style_tags", description="Comma-separated style tags (e.g., 'pop, upbeat, female vocalist').", type="string", required=False),
-            ToolParameter(name="title", description="Optional title for the generated track.", type="string", required=False),
-            # ToolParameter(name="custom_lyrics", description="Provide full lyrics for the song (experimental). If used, the main prompt should describe the music style.", type="string", required=False),
-        ]
-    )
-)
-async def generate_music_tool(
+# Tool 1: Simple Generation
+@mcp.tool()
+async def generate_song(
     prompt: str,
     instrumental: bool = False,
-    style_tags: str | None = None,
-    title: str | None = None,
-    # custom_lyrics: str | None = None, # Custom lyrics mode not implemented in minimal adapter
-    ctx: Context | None = None # Context object provided by FastMCP
-) -> str | Image: # Return text description or MCP Image object containing audio
-    """MCP Tool function to generate music."""
-    if not ctx:
-        return "Error: MCP Context not available."
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Generates a song based on a descriptive prompt using Suno AI.
 
+    Args:
+        prompt: Detailed description of the music (e.g., '80s synthwave, retrofuturistic, driving beat').
+        instrumental: Set to true to generate instrumental music only (default: False).
+        ctx: MCP Context (automatically injected).
+
+    Returns:
+        A text description including a suno:// URI to play the generated song.
+    """
+    if not ctx: return "Error: MCP Context not available."
     lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.suno_client:
-        return "Error: Suno API adapter is not initialized. Check server logs and configuration."
+        return "Error: Suno API adapter not initialized. Check server logs."
 
-    suno_client: SunoAdapter = lifespan_ctx.suno_client
+    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type assertion
 
-    await ctx.info(f"Received music generation request: '{prompt}' (Instrumental: {instrumental}, Style: {style_tags}, Title: {title})")
+    await ctx.info(f"Received simple generation request: '{prompt}' (Instrumental: {instrumental})")
 
     try:
-        await ctx.report_progress(0, 100, "Starting music generation...") # Progress: 0%
+        await ctx.report_progress(0, 100, "Starting simple generation...") # Progress: 0%
 
-        # Decide which adapter method to call based on provided parameters
-        # Use custom_generate if style_tags or title are provided, otherwise use generate
-        if style_tags or title:
-            await ctx.info("Using custom generation mode (tags/title provided).")
-            # Note: In Suno's custom mode, the 'prompt' usually contains lyrics.
-            # Here, we are passing the description as prompt, and style/title separately.
-            # This might not align perfectly with Suno's intended custom mode usage,
-            # but fits the adapter's current structure.
-            clips = await suno_client.custom_generate(
-                prompt=prompt, # Pass description as prompt
-                tags=style_tags,
-                title=title,
-                make_instrumental=instrumental,
-                wait_audio=True,
-                polling_interval=5
-            )
-        else:
-            await ctx.info("Using simple generation mode.")
-            clips = await suno_client.generate(
-                prompt=prompt,
-                make_instrumental=instrumental,
-                wait_audio=True,
-                polling_interval=5
-            )
-
-        await ctx.report_progress(50, 100, "Generation request submitted, waiting for results...") # Progress: 50%
-
-        if not clips:
-            await ctx.error("Music generation request succeeded but returned no clips.")
-            return "Music generation failed or returned no clips."
-
-        results = []
-        successful_clips = [c for c in clips if c.get("status") == "complete" and c.get("audio_url")]
-
-        if not successful_clips:
-             await ctx.error("Generation completed, but no successful audio clips were produced.")
-             # Provide more detail if available
-             error_messages = [c.get('error_message', 'Unknown error') for c in clips if c.get('status') == 'error']
-             if error_messages:
-                 return f"Generation failed. Errors: {'; '.join(error_messages)}"
-             else:
-                 return "Generation completed, but no successful audio clips were produced."
-
-
-        await ctx.info(f"Successfully generated {len(successful_clips)} audio clip(s).")
-        await ctx.report_progress(80, 100, "Downloading audio...") # Progress: 80%
-
-        # For simplicity, return the first successful clip's audio
-        # TODO: Handle multiple clips better (e.g., return list of URLs or multiple Image objects?)
-        first_clip = successful_clips[0]
-        audio_url = first_clip.get("audio_url")
-        clip_title = first_clip.get("title", "Untitled Suno Track")
-        clip_id = first_clip.get("id")
-
-        if not audio_url:
-             await ctx.error(f"Clip {clip_id} is complete but has no audio URL.")
-             return f"Clip {clip_id} generated but audio URL is missing."
-
-        # Download the audio (MP3 typically)
-        audio_data_mp3 = await download_audio(audio_url)
-
-        if not audio_data_mp3:
-            await ctx.error(f"Failed to download audio for clip {clip_id} from {audio_url}")
-            return f"Failed to download audio for clip {clip_id}."
-
-        # Download the audio using the new handler
-        # download_audio now returns a tuple: (BytesIO, mime_type) or None
-        download_result = await download_audio(audio_url)
-
-        if not download_result:
-            await ctx.error(f"Failed to download audio for clip {clip_id} from {audio_url} using audio_handler.")
-            return f"Failed to download audio for clip {clip_id}."
-
-        audio_data_bytes_io, audio_mime_type = download_result
-
-        await ctx.report_progress(95, 100, f"Audio downloaded ({audio_mime_type}). Preparing resource...") # Progress: 95%
-
-        # Create MCP Image object with raw audio bytes and MIME type
-        # The 'format' field in MCP Image corresponds to the MIME type here.
-        image = Image(
-            data=audio_data_bytes_io.getvalue(),
-            format=audio_mime_type, # Use the detected MIME type
-            description=f"Generated Music: {clip_title} (ID: {clip_id})"
+        clips: List[Dict[str, Any]] = await suno_client.generate(
+            prompt=prompt,
+            make_instrumental=instrumental,
+            wait_audio=True, # Wait for generation to complete
+            polling_interval=5
         )
 
-        await ctx.report_progress(100, 100, "Audio ready.") # Progress: 100%
-        return image # Return the MCP Image object containing the audio data
+        await ctx.report_progress(50, 100, "Waiting for Suno generation...") # Progress: 50%
+
+        if not clips:
+            await ctx.error("Suno request succeeded but returned no clips.")
+            return "Music generation failed or returned no clips."
+
+        # Filter for successfully completed clips with an ID
+        successful_clips = [c for c in clips if c.get("status") == "complete" and c.get("id")]
+
+        if not successful_clips:
+            await ctx.error("Generation completed, but no successful audio clips were produced.")
+            error_messages = [c.get('error_message', 'Unknown error') for c in clips if c.get('status') == 'error']
+            return f"Generation failed. Errors: {'; '.join(error_messages)}" if error_messages else "No successful clips produced."
+
+        # For MVP, just use the first successful clip
+        first_clip = successful_clips[0]
+        clip_id = first_clip.get("id")
+        clip_title = first_clip.get("title", "Untitled Suno Track")
+
+        if not clip_id:
+             await ctx.error("Successful clip found, but it is missing an ID.")
+             return "Generation succeeded but failed to retrieve clip ID."
+
+
+        await ctx.info(f"Successfully generated clip '{clip_title}' (ID: {clip_id}).")
+        await ctx.report_progress(100, 100, "Generation complete.") # Progress: 100%
+
+        # Return text description with the resource URI
+        return f"Generated song: '{clip_title}'.\nPlay it using the resource URI: suno://{clip_id}"
 
     except SunoApiException as e:
         await ctx.error(f"Suno API Error: {e}")
-        return f"Error during music generation: {e}"
+        return f"Error during simple generation: {e}"
     except Exception as e:
         await ctx.error(f"Unexpected Error: {e}")
-        traceback.print_exc() # Log full traceback to server console
-        return f"An unexpected error occurred: {e}"
+        traceback.print_exc()
+        return f"An unexpected error occurred during simple generation: {e}"
 
-# --- Removed get_suno_credits tool as it's not part of the minimal adapter ---
+
+# Tool 2: Custom Generation
+@mcp.tool()
+async def custom_generate_song(
+    lyrics: str,
+    style_tags: Optional[str] = None,
+    title: Optional[str] = None,
+    instrumental: bool = False,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Generates a song with custom lyrics, style tags, and title using Suno AI.
+
+    Args:
+        lyrics: The full lyrics for the song.
+        style_tags: Comma-separated style tags (e.g., 'pop, upbeat, female vocalist').
+        title: Optional title for the generated track.
+        instrumental: Set to true to generate instrumental music only (default: False).
+        ctx: MCP Context (automatically injected).
+
+    Returns:
+        A text description including a suno:// URI to play the generated song.
+    """
+    if not ctx: return "Error: MCP Context not available."
+    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.suno_client:
+        return "Error: Suno API adapter not initialized. Check server logs."
+
+    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type assertion
+
+    await ctx.info(f"Received custom generation request: (Title: {title}, Style: {style_tags}, Instrumental: {instrumental})")
+    await ctx.debug(f"Lyrics: {lyrics[:100]}...") # Log start of lyrics
+
+    try:
+        await ctx.report_progress(0, 100, "Starting custom generation...") # Progress: 0%
+
+        clips: List[Dict[str, Any]] = await suno_client.custom_generate(
+            prompt=lyrics, # Use lyrics as the main prompt for custom mode
+            tags=style_tags,
+            title=title,
+            make_instrumental=instrumental,
+            wait_audio=True, # Wait for generation to complete
+            polling_interval=5
+        )
+
+        await ctx.report_progress(50, 100, "Waiting for Suno custom generation...") # Progress: 50%
+
+        if not clips:
+            await ctx.error("Suno custom request succeeded but returned no clips.")
+            return "Custom music generation failed or returned no clips."
+
+        # Filter for successfully completed clips with an ID
+        successful_clips = [c for c in clips if c.get("status") == "complete" and c.get("id")]
+
+        if not successful_clips:
+            await ctx.error("Custom generation completed, but no successful audio clips were produced.")
+            error_messages = [c.get('error_message', 'Unknown error') for c in clips if c.get('status') == 'error']
+            return f"Custom generation failed. Errors: {'; '.join(error_messages)}" if error_messages else "No successful clips produced."
+
+        # For MVP, just use the first successful clip
+        first_clip = successful_clips[0]
+        clip_id = first_clip.get("id")
+        clip_title = first_clip.get("title", title or "Untitled Custom Suno Track") # Use provided title or default
+
+        if not clip_id:
+             await ctx.error("Successful custom clip found, but it is missing an ID.")
+             return "Custom generation succeeded but failed to retrieve clip ID."
+
+        await ctx.info(f"Successfully generated custom clip '{clip_title}' (ID: {clip_id}).")
+        await ctx.report_progress(100, 100, "Custom generation complete.") # Progress: 100%
+
+        # Return text description with the resource URI
+        return f"Generated custom song: '{clip_title}'.\nPlay it using the resource URI: suno://{clip_id}"
+
+    except SunoApiException as e:
+        await ctx.error(f"Suno API Error during custom generation: {e}")
+        return f"Error during custom music generation: {e}"
+    except Exception as e:
+        await ctx.error(f"Unexpected Error during custom generation: {e}")
+        traceback.print_exc()
+        return f"An unexpected error occurred during custom generation: {e}"
+
+
+# --- MCP Resource Handler ---
+
+@mcp.resource_handler("suno")
+async def handle_suno_resource(uri: str, ctx: Optional[Context] = None) -> Optional[Resource]:
+    """
+    Handles requests for suno://<song_id> URIs to retrieve and serve audio.
+
+    Args:
+        uri: The resource URI (e.g., "suno://abc-123").
+        ctx: MCP Context (automatically injected).
+
+    Returns:
+        An MCP Resource object containing the audio data and MIME type, or None if retrieval fails.
+    """
+    if not ctx:
+        print("Error: MCP Context not available in resource handler.")
+        return None
+
+    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
+    if not lifespan_ctx or not lifespan_ctx.suno_client:
+        print("Error: Suno API adapter not initialized in resource handler.")
+        # Log to server console, client won't see this directly unless MCP forwards it
+        await ctx.error("Resource handler cannot access Suno client (not initialized).")
+        return None
+
+    suno_client: SunoAdapter = lifespan_ctx.suno_client
+
+    try:
+        parsed_uri = urlparse(uri)
+        if parsed_uri.scheme != "suno" or not parsed_uri.netloc:
+            await ctx.error(f"Invalid Suno resource URI format: {uri}")
+            return None
+
+        song_id = parsed_uri.netloc # The song ID is the 'host' part of the URI
+        await ctx.info(f"Handling resource request for Suno song ID: {song_id}")
+
+        # 1. Get clip details from Suno API using the ID
+        await ctx.report_progress(10, 100, f"Fetching details for song {song_id}...")
+        clip_details_list = await suno_client.get([song_id])
+
+        if not clip_details_list:
+            await ctx.error(f"Could not find details for song ID: {song_id}")
+            return None
+
+        clip_details = clip_details_list[0] # .get() returns a list
+        audio_url = clip_details.get("audio_url")
+        clip_title = clip_details.get("title", "Untitled Suno Track")
+        clip_status = clip_details.get("status")
+
+        if clip_status != "complete" or not audio_url:
+            # Check if it's still processing
+            if clip_status in ["submitted", "processing", "queued"]:
+                 await ctx.info(f"Song {song_id} is still processing (Status: {clip_status}). Client should retry.")
+                 # Return a temporary error or specific message? MCP doesn't have a standard retry mechanism here.
+                 # For now, treat as failure for the resource handler.
+                 await ctx.error(f"Song {song_id} is not ready yet (Status: {clip_status}). Please try again later.")
+                 return None # Indicate failure to retrieve resource *now*
+            else:
+                await ctx.error(f"Song {song_id} is not complete or has no audio URL (Status: {clip_status}).")
+                # Optionally, check for error messages in clip_details
+                return None
+
+        await ctx.info(f"Found audio URL for song {song_id}: {audio_url}")
+        await ctx.report_progress(30, 100, "Downloading audio...")
+
+        # 2. Download the audio using audio_handler
+        # download_audio returns a tuple: (BytesIO, mime_type) or None
+        download_result = await download_audio(audio_url)
+
+        if not download_result:
+            await ctx.error(f"Failed to download audio for song {song_id} from {audio_url}")
+            return None
+
+        audio_data_bytes_io, audio_mime_type = download_result
+        audio_bytes = audio_data_bytes_io.getvalue()
+        await ctx.info(f"Audio downloaded ({len(audio_bytes)} bytes, type: {audio_mime_type}).")
+        await ctx.report_progress(90, 100, "Audio downloaded. Preparing resource...")
+
+        # 3. Create and return the MCP Resource
+        resource = Resource(
+            uri=uri,
+            mime_type=audio_mime_type,
+            data=audio_bytes,
+            description=f"Suno AI Generated Audio: {clip_title} (ID: {song_id})"
+        )
+        await ctx.report_progress(100, 100, "Resource ready.")
+        return resource
+
+    except SunoApiException as e:
+        await ctx.error(f"Suno API Error while handling resource {uri}: {e}")
+        return None
+    except Exception as e:
+        await ctx.error(f"Unexpected Error while handling resource {uri}: {e}")
+        traceback.print_exc() # Log full traceback to server console
+        return None
+
 
 # --- Main Execution ---
 if __name__ == "__main__":
