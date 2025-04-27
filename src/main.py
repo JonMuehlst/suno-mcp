@@ -34,47 +34,12 @@ registered_resource_handlers: Set[str] = set()
 # --- MCP Server Setup ---
 # FastMCP server is initialized at module level above
 
-# --- Lifespan Management (Optional but Recommended) ---
-# --- Server Context for Lifespan ---
-class ServerContext:
-    """Holds resources needed during the server's lifespan."""
-    def __init__(self):
-        self.suno_client: Optional[SunoAdapter] = None
+# --- MCP Server Setup ---
+# Store state directly on the mcp instance
+mcp.state = type('ServerState', (), {'suno_client': None})()
 
-# --- Lifespan Management ---
-async def lifespan_manager(server: FastMCP) -> AsyncIterator[None]:
-    """Manages the SunoAdapter client lifecycle."""
-    print("MCP Server Lifespan: Initializing Suno API adapter...")
-    server.state.suno_client = None
-    try:
-        # Initialize the adapter
-        server.state.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
-        # Perform an initial check (e.g., try refreshing token) to ensure auth works
-        try:
-            await server.state.suno_client.refresh_token()
-            print("Suno adapter initialized and token refreshed successfully.")
-        except SunoApiException as e:
-            print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
-            # Decide if this should prevent startup? For now, just warn.
-        except Exception as e:
-             print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
-
-        yield # Make client available to tools via ctx.app.state.suno_client
-
-    except ValueError as e:
-        print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
-        # Allow server to start but client will be None, tools must check
-        yield
-    except Exception as e:
-        print(f"Critical error during Suno adapter initialization: {e}")
-        traceback.print_exc()
-        # Yield even on critical error, tools must handle None client
-        yield
-    finally:
-        print("MCP Server Lifespan: Shutting down...")
-        if server.state.suno_client:
-            await server.state.suno_client.close()
-            print("Suno API adapter closed.")
+# Initialize the Suno client in the main function
+# The cleanup will be handled there as well
 
 
 # --- MCP Tools ---
@@ -98,10 +63,10 @@ async def generate_song(
         A text description including a suno:// URI to play the generated song.
     """
     if not ctx: return "Error: MCP Context not available."
-    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
+    if not hasattr(mcp, 'state') or not mcp.state.suno_client:
         return "Error: Suno API adapter not initialized. Check server logs."
 
-    suno_client: SunoAdapter = ctx.app.state.suno_client # Type assertion
+    suno_client: SunoAdapter = mcp.state.suno_client # Type assertion
 
     await ctx.info(f"Received simple generation request: '{prompt}' (Instrumental: {instrumental})")
 
@@ -177,10 +142,10 @@ async def custom_generate_song(
         A text description including a suno:// URI to play the generated song.
     """
     if not ctx: return "Error: MCP Context not available."
-    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
+    if not hasattr(mcp, 'state') or not mcp.state.suno_client:
         return "Error: Suno API adapter not initialized. Check server logs."
 
-    suno_client: SunoAdapter = ctx.app.state.suno_client # Type assertion
+    suno_client: SunoAdapter = mcp.state.suno_client # Type assertion
 
     await ctx.info(f"Received custom generation request: (Title: {title}, Style: {style_tags}, Instrumental: {instrumental})")
     await ctx.debug(f"Lyrics: {lyrics[:100]}...") # Log start of lyrics
@@ -252,11 +217,11 @@ async def get_suno_audio(song_id: str, ctx: Context) -> bytes:
     Raises:
         ValueError: If the song is not found or not ready.
     """
-    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
+    if not hasattr(mcp, 'state') or not mcp.state.suno_client:
         await ctx.error("Resource handler cannot access Suno client (not initialized).")
         raise ValueError("Suno client not initialized")
 
-    suno_client: SunoAdapter = ctx.app.state.suno_client
+    suno_client: SunoAdapter = mcp.state.suno_client
     
     try:
         await ctx.info(f"Handling resource request for Suno song ID: {song_id}")
@@ -327,10 +292,46 @@ if __name__ == "__main__":
     # For Claude Desktop, you'll use `mcp install src/main.py`
     # and Claude Desktop will manage running the server process.
 
+    # Initialize the Suno client before starting the server
+    async def init_suno_client():
+        """Initialize the Suno API adapter."""
+        print("Initializing Suno API adapter...")
+        mcp.state.suno_client = None
+        try:
+            # Initialize the adapter
+            mcp.state.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
+            # Perform an initial check (e.g., try refreshing token) to ensure auth works
+            try:
+                await mcp.state.suno_client.refresh_token()
+                print("Suno adapter initialized and token refreshed successfully.")
+            except SunoApiException as e:
+                print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
+                # Decide if this should prevent startup? For now, just warn.
+            except Exception as e:
+                print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
+        except ValueError as e:
+            print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
+        except Exception as e:
+            print(f"Critical error during Suno adapter initialization: {e}")
+            traceback.print_exc()
+
+    # Cleanup function to be called on shutdown
+    async def cleanup_suno_client():
+        """Clean up the Suno API adapter."""
+        print("MCP Server Lifespan: Shutting down...")
+        if mcp.state.suno_client:
+            await mcp.state.suno_client.close()
+            print("Suno API adapter closed.")
+
     # To run directly (e.g., python src/main.py):
     # By default, this will use HTTP transport on port 8000 when run directly,
     # but will use stdio transport when run by Claude Desktop.
     import sys
+    import asyncio
+    
+    # Initialize the client before starting the server
+    asyncio.run(init_suno_client())
+    
     try:
         # Check for transport arguments
         if "--transport" in sys.argv:
@@ -356,6 +357,9 @@ if __name__ == "__main__":
         print(f"Server failed to start or crashed: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Clean up resources
+        asyncio.run(cleanup_suno_client())
 
     # Example commands to test:
     # HTTP mode: python -m src.main --transport sse --port 8000
