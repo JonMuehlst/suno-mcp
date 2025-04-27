@@ -3,6 +3,12 @@ MCP Server Entry Point for Suno AI Integration.
 
 This server uses the Model Context Protocol (MCP) to expose Suno AI music
 generation capabilities to compatible clients like Claude Desktop.
+
+Note: This integration requires a self-hosted Suno API server using the
+gcui-art/suno-api repository (https://github.com/gcui-art/suno-api).
+The official Suno API is not publicly available, so this implementation
+relies on the open-source alternative that provides access to Suno's
+music generation capabilities.
 """
 
 import asyncio
@@ -40,6 +46,8 @@ mcp.state = type('ServerState', (), {'suno_client': None})()
 
 # Initialize the Suno client in the main function
 # The cleanup will be handled there as well
+# Note: This requires a self-hosted Suno API server using gcui-art/suno-api
+# See: https://github.com/gcui-art/suno-api for setup instructions
 
 
 # --- MCP Tools ---
@@ -53,6 +61,9 @@ async def generate_song(
 ) -> str:
     """
     Generates a song based on a descriptive prompt using Suno AI.
+
+    This tool requires a self-hosted Suno API server (https://github.com/gcui-art/suno-api)
+    as the official Suno API is not publicly available.
 
     Args:
         prompt: Detailed description of the music (e.g., '80s synthwave, retrofuturistic, driving beat').
@@ -131,6 +142,9 @@ async def custom_generate_song(
     """
     Generates a song with custom lyrics, style tags, and title using Suno AI.
 
+    This tool requires a self-hosted Suno API server (https://github.com/gcui-art/suno-api)
+    as the official Suno API is not publicly available.
+
     Args:
         lyrics: The full lyrics for the song.
         style_tags: Comma-separated style tags (e.g., 'pop, upbeat, female vocalist').
@@ -206,6 +220,9 @@ async def custom_generate_song(
 async def get_suno_audio(song_id: str, ctx: Context) -> bytes:
     """
     Retrieves audio for a Suno-generated song by ID.
+    
+    This resource handler requires a self-hosted Suno API server (https://github.com/gcui-art/suno-api)
+    as the official Suno API is not publicly available.
     
     Args:
         song_id: The Suno song ID.
@@ -294,7 +311,11 @@ if __name__ == "__main__":
 
     # Initialize the Suno client before starting the server
     async def init_suno_client():
-        """Initialize the Suno API adapter."""
+        """Initialize the Suno API adapter.
+        
+        Note: This requires a self-hosted Suno API server using gcui-art/suno-api
+        See: https://github.com/gcui-art/suno-api for setup instructions
+        """
         print("Initializing Suno API adapter...")
         mcp.state.suno_client = None
         try:
