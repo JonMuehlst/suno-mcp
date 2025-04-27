@@ -11,10 +11,10 @@ import io
 from typing import Optional, AsyncIterator, List, Dict, Any # Added for type hints
 from urllib.parse import urlparse # Added for URI parsing
 
-from mcp.server.fastmcp import FastMCP, Context, Resource # Updated import
-# ToolInputSchema/ToolParameter are not needed if using docstrings for schema generation
-# from mcp.server.models import ToolInputSchema, ToolParameter
+# Import all MCP dependencies first
+from fastmcp import FastMCP, Context
 
+# Import local modules
 from src import config # Loads .env automatically
 from src.suno_api import SunoAdapter, SunoApiException
 from src.audio_handler import download_audio # Updated import
@@ -81,7 +81,7 @@ async def lifespan_manager(server: FastMCP) -> AsyncIterator[ServerContext]:
 async def generate_song(
     prompt: str,
     instrumental: bool = False,
-    ctx: Optional[Context] = None
+    ctx: Context = None
 ) -> str:
     """
     Generates a song based on a descriptive prompt using Suno AI.
@@ -159,7 +159,7 @@ async def custom_generate_song(
     style_tags: Optional[str] = None,
     title: Optional[str] = None,
     instrumental: bool = False,
-    ctx: Optional[Context] = None
+    ctx: Context = None
 ) -> str:
     """
     Generates a song with custom lyrics, style tags, and title using Suno AI.
@@ -237,7 +237,7 @@ async def custom_generate_song(
 # --- MCP Resource Handler ---
 
 @mcp.resource_handler("suno")
-async def handle_suno_resource(uri: str, ctx: Optional[Context] = None) -> Optional[Resource]:
+async def handle_suno_resource(uri: str, ctx: Context = None):
     """
     Handles requests for suno://<song_id> URIs to retrieve and serve audio.
 
@@ -313,6 +313,7 @@ async def handle_suno_resource(uri: str, ctx: Optional[Context] = None) -> Optio
         await ctx.report_progress(90, 100, "Audio downloaded. Preparing resource...")
 
         # 3. Create and return the MCP Resource
+        from fastmcp import Resource
         resource = Resource(
             uri=uri,
             mime_type=audio_mime_type,
