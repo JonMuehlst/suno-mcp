@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 DEFAULT_BASE_URL = "https://studio-api.suno.ai"
 DEFAULT_CLERK_BASE_URL = "https://clerk.suno.ai"
+LOCAL_API_PATTERN = "localhost:|127.0.0.1:"
 # Use a known working Clerk version, can be updated if needed
 # CLERK_VERSION = "4.72.0-snapshot.vc141245" # From old code
 CLERK_VERSION = "5.15.0" # From TS code analysis
@@ -50,11 +51,12 @@ class SunoAdapter:
         self._session_id = self._extract_sid_from_cookie(self._cookie)
         if not self._session_id:
             # Fallback to env var if not in cookie (though Clerk usually sets it)
-            self._session_id = config.SUNO_SESSION_ID
+            self._session_id = getattr(config, 'SUNO_SESSION_ID', None)
             if not self._session_id:
                  raise ValueError("Could not find 'sid' in cookie and SUNO_SESSION_ID is not set.")
 
-        self._token: Optional[str] = config.SUNO_TOKEN # Initial token from config, will be refreshed
+        # Initial token from config (if available), will be refreshed
+        self._token: Optional[str] = getattr(config, 'SUNO_TOKEN', None)
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
         # Mimic headers observed in TS code/browser requests
         self._client.headers.update({
@@ -93,6 +95,14 @@ class SunoAdapter:
 
     async def refresh_token(self) -> None:
         """Refreshes the authentication token using the session ID via Clerk."""
+        # Skip token refresh for local API servers
+        if any(pattern in self._base_url for pattern in LOCAL_API_PATTERN.split('|')):
+            logger.info(f"Skipping token refresh for local API server: {self._base_url}")
+            # Set a dummy token for local development
+            self._token = "local-development-token"
+            self._update_headers()
+            return
+
         if not self._session_id:
             raise SunoApiException("Cannot refresh token: Session ID (sid) is missing.")
 
@@ -145,7 +155,10 @@ class SunoAdapter:
         Raises:
             SunoApiException: For API errors, network issues, or CAPTCHA failures.
         """
-        if not self._token:
+        # For local API servers, we may not need a token
+        is_local_api = any(pattern in self._base_url for pattern in LOCAL_API_PATTERN.split('|'))
+        
+        if not self._token and not is_local_api:
             logger.info("No initial token found, attempting refresh...")
             await self.refresh_token()
 
