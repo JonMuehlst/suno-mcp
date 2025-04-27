@@ -66,15 +66,29 @@ Now, let's tell Claude Desktop how to find and run your Suno server.
     {
       "mcpServers": {
         "suno": {
-          "command": "python",
+          "command": "C:\\path\\to\\your\\venv\\Scripts\\python.exe",
           "args": ["-m", "src.main"]
         }
       }
     }
     ```
-    *   **Virtual Environment Note:** If you activated a virtual environment in Step 1b, you should specify the full path to the Python executable *within that environment* here.
-        *   Example (Windows): `"command": "C:\\path\\to\\your\\project\\venv\\Scripts\\python.exe"` (use double backslashes `\\`).
-        *   Example (macOS/Linux): `"command": "/path/to/your/project/venv/bin/python"`
+    *   **Path Note:** The example above uses the path to a Python executable in a virtual environment. Make sure to adjust these paths for your specific setup:
+        *   For the `command` value: Use the full path to your Python executable (with double backslashes on Windows)
+        *   For the `args` value: The `-m src.main` approach uses Python's module import system
+        
+    *   **Important Path Fix:** If you're getting errors about the server not finding the main.py file:
+        *   Option 1: Make sure Claude Desktop is running from your project's root directory
+        *   Option 2: Use the full path to main.py instead of the module approach:
+            ```json
+            {
+              "mcpServers": {
+                "suno": {
+                  "command": "C:\\path\\to\\your\\venv\\Scripts\\python.exe",
+                  "args": ["C:\\path\\to\\your\\project\\src\\main.py"]
+                }
+              }
+            }
+            ```
     *   Ensure the path in `"args"` (`"src.main"`) is correct relative to where Claude Desktop will execute the command (usually the project root if configured as above).
 
 **c. Restart Claude Desktop:**
@@ -121,7 +135,10 @@ Claude will process the request using your local server, and the generated audio
 
 *   **No Hammer Icon (🔨) in Claude:**
     *   **Restart Claude:** Did you fully restart Claude Desktop after editing the config file?
-    *   **Check Config Path:** Double-check the `claude_desktop_config.json` file. Is the `"command"` path to Python (especially if using a venv) correct? Is the `"args"` value `["-m", "src.main"]` correct? Syntax errors in the JSON can also prevent loading.
+    *   **Check Config Path:** Double-check the `claude_desktop_config.json` file:
+        *   Is the `"command"` path to Python (especially if using a venv) correct?
+        *   Is the `"args"` value correct? If using `["-m", "src.main"]`, Claude Desktop must be running from your project's root directory. If that's not working, try using the full path to main.py instead: `["C:\\path\\to\\your\\project\\src\\main.py"]`.
+        *   Syntax errors in the JSON can also prevent loading.
     *   **Run Manually:** Open your terminal, activate your virtual environment (if used), navigate to the project root directory, and run the command from your config file manually: `python -m src.main`. Does it start without errors? Watch the terminal output for clues. Fix any errors reported there.
     *   **Check `.env`:** Ensure the `.env` file exists in the project root and `SUNO_COOKIE` is set. The server might fail to start if the cookie is missing.
 *   **Errors During Song Generation:**
