@@ -215,35 +215,6 @@ class SunoAdapter:
             logger.exception(f"An unexpected error occurred during API request to {endpoint}: {e}")
             raise SunoApiException(f"An unexpected error occurred: {e}") from e
 
-    async def check_captcha(self, generation_type: str = "generation") -> bool:
-        """
-        Checks if a CAPTCHA is required for a specific action type.
-
-        Args:
-            generation_type: The type of action (e.g., "generation", "concat").
-
-        Returns:
-            True if CAPTCHA is required, False otherwise.
-        """
-        logger.info(f"Checking if CAPTCHA is required for type: {generation_type}")
-        try:
-            response = await self._request(
-                "POST",
-                "/api/c/check",
-                json={"ctype": generation_type},
-                attempt_captcha_solve=False # Don't try to solve CAPTCHA on the check itself
-            )
-            is_required = response.get("required", False)
-            logger.info(f"CAPTCHA required status: {is_required}")
-            return is_required
-        except SunoApiException as e:
-            # If the check itself fails, log it but assume CAPTCHA might be needed
-            logger.error(f"Failed to check CAPTCHA status: {e}. Proceeding cautiously.")
-            return True # Be conservative, assume it might be needed if check fails
-        except Exception as e:
-            logger.exception("Unexpected error during CAPTCHA check.")
-            return True # Be conservative
-
     async def _generate_request(
         self,
         payload: Dict[str, Any],
@@ -255,13 +226,7 @@ class SunoAdapter:
         endpoint = "/api/generate/v2/"
         logger.info(f"Submitting generation request to {endpoint} with payload: {payload}")
 
-        # --- CAPTCHA Check (Optional but recommended) ---
-        # Note: The API might still return 402 even if this check passes.
-        # if await self.check_captcha():
-        #     logger.warning("Pre-check indicates CAPTCHA might be required. Attempting generation anyway...")
-            # Consider adding pre-emptive solving here if desired, but handling the 402
-            # during the actual request (_request method) is more robust.
-
+        # The _request method handles CAPTCHA reactively if a 402 is returned.
         initial_response = await self._request("POST", endpoint, json=payload)
         logger.debug(f"Initial generation response: {initial_response}")
 
