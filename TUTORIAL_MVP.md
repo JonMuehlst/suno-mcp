@@ -140,7 +140,7 @@ Before using the server with Claude Desktop, you can verify that it's running co
 python -m src.main
 
 # In another terminal, run the test script
-python manual_server_check.py
+python manual_test_mcp_server.py
 ```
 
 If the server is running correctly, you should see:
@@ -151,7 +151,7 @@ Testing MCP server availability at http://localhost:8000/health...
 
 If you're using a different port or endpoint, you can specify it:
 ```bash
-python manual_server_check.py http://localhost:5000/health
+python manual_test_mcp_server.py http://localhost:5000/health
 ```
 
 ### Understanding MCP Server Transport Modes
@@ -178,7 +178,7 @@ The most reliable way to test your MCP server is using the built-in FastMCP Clie
 
 ```bash
 # Run the client-based test script
-python test_mcp_client.py
+python manual_test_mcp_client.py
 ```
 
 This approach directly connects to your MCP server using the same mechanisms that Claude Desktop uses, providing a more accurate test of your server's functionality.
@@ -194,7 +194,7 @@ This approach directly connects to your MCP server using the same mechanisms tha
         *   **Transport Mode Note:** Remember that Claude Desktop uses IO mode (stdio) to communicate with the server, not HTTP. The test script checks HTTP connectivity (port 8000), which confirms your server code is working, but Claude Desktop connects differently.
     *   **Test Server Directly:** Use the included test script to verify your server is running correctly:
         ```bash
-        python manual_server_check.py
+        python manual_test_mcp_server.py
         ```
         This will check if the server is accessible via HTTP (port 8000) and help diagnose connection issues.
     *   **Run Manually:** Open your terminal, activate your virtual environment (if used), navigate to the project root directory, and run the command from your config file manually: `python -m src.main`. Does it start without errors? Watch the terminal output for clues. Fix any errors reported there.
