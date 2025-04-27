@@ -38,17 +38,16 @@ class ServerContext:
         self.suno_client: Optional[SunoAdapter] = None
 
 # --- Lifespan Management ---
-@mcp.lifespan()
-async def lifespan_manager(server: FastMCP) -> AsyncIterator[ServerContext]:
+async def lifespan_manager(server: FastMCP) -> AsyncIterator[None]:
     """Manages the SunoAdapter client lifecycle."""
     print("MCP Server Lifespan: Initializing Suno API adapter...")
-    app_context = ServerContext()
+    server.state.suno_client = None
     try:
         # Initialize the adapter
-        app_context.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
+        server.state.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
         # Perform an initial check (e.g., try refreshing token) to ensure auth works
         try:
-            await app_context.suno_client.refresh_token()
+            await server.state.suno_client.refresh_token()
             print("Suno adapter initialized and token refreshed successfully.")
         except SunoApiException as e:
             print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
@@ -56,21 +55,21 @@ async def lifespan_manager(server: FastMCP) -> AsyncIterator[ServerContext]:
         except Exception as e:
              print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
 
-        yield app_context # Make client available to tools via ctx.request_context.lifespan_context
+        yield # Make client available to tools via ctx.app.state.suno_client
 
     except ValueError as e:
         print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
         # Allow server to start but client will be None, tools must check
-        yield app_context
+        yield
     except Exception as e:
         print(f"Critical error during Suno adapter initialization: {e}")
         traceback.print_exc()
-        # Yield context even on critical error, tools must handle None client
-        yield app_context
+        # Yield even on critical error, tools must handle None client
+        yield
     finally:
         print("MCP Server Lifespan: Shutting down...")
-        if app_context.suno_client:
-            await app_context.suno_client.close()
+        if server.state.suno_client:
+            await server.state.suno_client.close()
             print("Suno API adapter closed.")
 
 
@@ -95,11 +94,10 @@ async def generate_song(
         A text description including a suno:// URI to play the generated song.
     """
     if not ctx: return "Error: MCP Context not available."
-    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.suno_client:
+    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
         return "Error: Suno API adapter not initialized. Check server logs."
 
-    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type assertion
+    suno_client: SunoAdapter = ctx.app.state.suno_client # Type assertion
 
     await ctx.info(f"Received simple generation request: '{prompt}' (Instrumental: {instrumental})")
 
@@ -175,11 +173,10 @@ async def custom_generate_song(
         A text description including a suno:// URI to play the generated song.
     """
     if not ctx: return "Error: MCP Context not available."
-    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.suno_client:
+    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
         return "Error: Suno API adapter not initialized. Check server logs."
 
-    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type assertion
+    suno_client: SunoAdapter = ctx.app.state.suno_client # Type assertion
 
     await ctx.info(f"Received custom generation request: (Title: {title}, Style: {style_tags}, Instrumental: {instrumental})")
     await ctx.debug(f"Lyrics: {lyrics[:100]}...") # Log start of lyrics
@@ -251,12 +248,11 @@ async def get_suno_audio(song_id: str, ctx: Context) -> bytes:
     Raises:
         ValueError: If the song is not found or not ready.
     """
-    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.suno_client:
+    if not hasattr(ctx.app.state, 'suno_client') or not ctx.app.state.suno_client:
         await ctx.error("Resource handler cannot access Suno client (not initialized).")
         raise ValueError("Suno client not initialized")
 
-    suno_client: SunoAdapter = lifespan_ctx.suno_client
+    suno_client: SunoAdapter = ctx.app.state.suno_client
     
     try:
         await ctx.info(f"Handling resource request for Suno song ID: {song_id}")

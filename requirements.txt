@@ -1,4 +1,4 @@
-mcp[cli]>=1.6.0
+fastmcp>=1.0.0
 httpx>=0.27.0
 2captcha-python>=1.0.0
 pydub>=0.25.1
