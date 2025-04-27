@@ -18,8 +18,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
-BASE_URL = "https://studio-api.suno.ai"
-CLERK_BASE_URL = "https://clerk.suno.ai"
+DEFAULT_BASE_URL = "https://studio-api.suno.ai"
+DEFAULT_CLERK_BASE_URL = "https://clerk.suno.ai"
 # Use a known working Clerk version, can be updated if needed
 # CLERK_VERSION = "4.72.0-snapshot.vc141245" # From old code
 CLERK_VERSION = "5.15.0" # From TS code analysis
@@ -33,14 +33,17 @@ class SunoApiException(Exception):
 
 # --- Minimal Suno Adapter ---
 class SunoAdapter:
-    def __init__(self, cookie: Optional[str] = None):
+    def __init__(self, cookie: Optional[str] = None, base_url: Optional[str] = None):
         """
         Initializes the Suno API adapter.
 
         Args:
             cookie: The '__client' and 'sid' cookie string. If None, uses config.SUNO_COOKIE.
+            base_url: The base URL for the Suno API. If None, uses the default.
         """
         self._cookie = cookie or config.SUNO_COOKIE
+        self._base_url = base_url or DEFAULT_BASE_URL
+        self._clerk_base_url = DEFAULT_CLERK_BASE_URL
         if not self._cookie:
             raise ValueError("Suno cookie must be provided either via argument or SUNO_COOKIE env var.")
 
@@ -52,7 +55,7 @@ class SunoAdapter:
                  raise ValueError("Could not find 'sid' in cookie and SUNO_SESSION_ID is not set.")
 
         self._token: Optional[str] = config.SUNO_TOKEN # Initial token from config, will be refreshed
-        self._client = httpx.AsyncClient(base_url=BASE_URL, timeout=60.0)
+        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
         # Mimic headers observed in TS code/browser requests
         self._client.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36", # Example modern UA
@@ -95,7 +98,7 @@ class SunoAdapter:
 
         logger.info(f"Refreshing token using session ID: {self._session_id}")
         # Use a separate client for Clerk requests to avoid header conflicts
-        async with httpx.AsyncClient(base_url=CLERK_BASE_URL, timeout=30.0) as clerk_client:
+        async with httpx.AsyncClient(base_url=self._clerk_base_url, timeout=30.0) as clerk_client:
             try:
                 # Endpoint from TS code analysis
                 refresh_url = f"/v1/client/sessions/{self._session_id}/tokens?_clerk_js_version={CLERK_VERSION}"
