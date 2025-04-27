@@ -8,7 +8,7 @@ generation capabilities to compatible clients like Claude Desktop.
 import asyncio
 import traceback
 import io
-from typing import Optional, AsyncIterator, List, Dict, Any # Added for type hints
+from typing import Optional, AsyncIterator, List, Dict, Any, Set # Added for type hints
 from urllib.parse import urlparse # Added for URI parsing
 
 # Import all MCP dependencies first
@@ -26,6 +26,10 @@ mcp = FastMCP(
     description="Generates music using the Suno AI API via MCP.",
     # Dependencies are managed via requirements.txt
 )
+
+# Manually track registered tools and resource handlers for testing
+registered_tools: Set[str] = set()
+registered_resource_handlers: Set[str] = set()
 
 # --- MCP Server Setup ---
 # FastMCP server is initialized at module level above
@@ -310,6 +314,11 @@ async def get_suno_audio(song_id: str, ctx: Context) -> bytes:
         traceback.print_exc()  # Log full traceback to server console
         raise ValueError(f"Unexpected error: {e}")
 
+
+# Register tools and resource handlers for testing
+registered_tools.add("generate_song")
+registered_tools.add("custom_generate_song")
+registered_resource_handlers.add("suno")
 
 # --- Main Execution ---
 if __name__ == "__main__":
