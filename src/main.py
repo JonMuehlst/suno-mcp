@@ -236,100 +236,83 @@ async def custom_generate_song(
 
 # --- MCP Resource Handler ---
 
-@mcp.resource_handler("suno")
-async def handle_suno_resource(uri: str, ctx: Context = None):
+@mcp.resource("suno://{song_id}")
+async def get_suno_audio(song_id: str, ctx: Context) -> bytes:
     """
-    Handles requests for suno://<song_id> URIs to retrieve and serve audio.
-
+    Retrieves audio for a Suno-generated song by ID.
+    
     Args:
-        uri: The resource URI (e.g., "suno://abc-123").
+        song_id: The Suno song ID.
         ctx: MCP Context (automatically injected).
-
+        
     Returns:
-        An MCP Resource object containing the audio data and MIME type, or None if retrieval fails.
+        The audio data as bytes.
+        
+    Raises:
+        ValueError: If the song is not found or not ready.
     """
-    if not ctx:
-        print("Error: MCP Context not available in resource handler.")
-        return None
-
     lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.suno_client:
-        print("Error: Suno API adapter not initialized in resource handler.")
-        # Log to server console, client won't see this directly unless MCP forwards it
         await ctx.error("Resource handler cannot access Suno client (not initialized).")
-        return None
+        raise ValueError("Suno client not initialized")
 
     suno_client: SunoAdapter = lifespan_ctx.suno_client
-
+    
     try:
-        parsed_uri = urlparse(uri)
-        if parsed_uri.scheme != "suno" or not parsed_uri.netloc:
-            await ctx.error(f"Invalid Suno resource URI format: {uri}")
-            return None
-
-        song_id = parsed_uri.netloc # The song ID is the 'host' part of the URI
         await ctx.info(f"Handling resource request for Suno song ID: {song_id}")
-
+        
         # 1. Get clip details from Suno API using the ID
         await ctx.report_progress(10, 100, f"Fetching details for song {song_id}...")
         clip_details_list = await suno_client.get([song_id])
-
+        
         if not clip_details_list:
             await ctx.error(f"Could not find details for song ID: {song_id}")
-            return None
-
-        clip_details = clip_details_list[0] # .get() returns a list
+            raise ValueError(f"Song ID {song_id} not found")
+            
+        clip_details = clip_details_list[0]  # .get() returns a list
         audio_url = clip_details.get("audio_url")
         clip_title = clip_details.get("title", "Untitled Suno Track")
         clip_status = clip_details.get("status")
-
+        
         if clip_status != "complete" or not audio_url:
             # Check if it's still processing
             if clip_status in ["submitted", "processing", "queued"]:
-                 await ctx.info(f"Song {song_id} is still processing (Status: {clip_status}). Client should retry.")
-                 # Return a temporary error or specific message? MCP doesn't have a standard retry mechanism here.
-                 # For now, treat as failure for the resource handler.
-                 await ctx.error(f"Song {song_id} is not ready yet (Status: {clip_status}). Please try again later.")
-                 return None # Indicate failure to retrieve resource *now*
+                await ctx.info(f"Song {song_id} is still processing (Status: {clip_status}).")
+                await ctx.error(f"Song {song_id} is not ready yet (Status: {clip_status}). Please try again later.")
+                raise ValueError(f"Song {song_id} is still processing (Status: {clip_status})")
             else:
                 await ctx.error(f"Song {song_id} is not complete or has no audio URL (Status: {clip_status}).")
-                # Optionally, check for error messages in clip_details
-                return None
-
+                raise ValueError(f"Song {song_id} is not available (Status: {clip_status})")
+                
         await ctx.info(f"Found audio URL for song {song_id}: {audio_url}")
         await ctx.report_progress(30, 100, "Downloading audio...")
-
+        
         # 2. Download the audio using audio_handler
-        # download_audio returns a tuple: (BytesIO, mime_type) or None
         download_result = await download_audio(audio_url)
-
+        
         if not download_result:
             await ctx.error(f"Failed to download audio for song {song_id} from {audio_url}")
-            return None
-
+            raise ValueError(f"Failed to download audio for song {song_id}")
+            
         audio_data_bytes_io, audio_mime_type = download_result
         audio_bytes = audio_data_bytes_io.getvalue()
+        
+        # Set the MIME type as metadata for the resource
+        ctx.response_headers["Content-Type"] = audio_mime_type
+        ctx.response_headers["X-Resource-Title"] = clip_title
+        
         await ctx.info(f"Audio downloaded ({len(audio_bytes)} bytes, type: {audio_mime_type}).")
-        await ctx.report_progress(90, 100, "Audio downloaded. Preparing resource...")
-
-        # 3. Create and return the MCP Resource
-        from fastmcp import Resource
-        resource = Resource(
-            uri=uri,
-            mime_type=audio_mime_type,
-            data=audio_bytes,
-            description=f"Suno AI Generated Audio: {clip_title} (ID: {song_id})"
-        )
         await ctx.report_progress(100, 100, "Resource ready.")
-        return resource
-
+        
+        return audio_bytes
+        
     except SunoApiException as e:
-        await ctx.error(f"Suno API Error while handling resource {uri}: {e}")
-        return None
+        await ctx.error(f"Suno API Error while handling resource: {e}")
+        raise ValueError(f"Suno API Error: {e}")
     except Exception as e:
-        await ctx.error(f"Unexpected Error while handling resource {uri}: {e}")
-        traceback.print_exc() # Log full traceback to server console
-        return None
+        await ctx.error(f"Unexpected Error while handling resource: {e}")
+        traceback.print_exc()  # Log full traceback to server console
+        raise ValueError(f"Unexpected error: {e}")
 
 
 # --- Main Execution ---
