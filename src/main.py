@@ -12,6 +12,7 @@ music generation capabilities.
 """
 
 import asyncio
+import os
 import traceback
 import io
 from typing import Optional, AsyncIterator, List, Dict, Any, Set # Added for type hints
@@ -24,6 +25,9 @@ from fastmcp import FastMCP, Context
 from src import config # Loads .env automatically
 from src.suno_api import SunoAdapter, SunoApiException
 from src.audio_handler import download_audio # Updated import
+
+# Get the Suno API base URL from environment variables or use default
+SUNO_API_BASE_URL = os.environ.get("SUNO_API_BASE_URL", "http://localhost:3000")
 
 # Create the MCP instance at module level so it can be imported by tests
 mcp = FastMCP(
@@ -319,8 +323,11 @@ if __name__ == "__main__":
         print("Initializing Suno API adapter...")
         mcp.state.suno_client = None
         try:
-            # Initialize the adapter
-            mcp.state.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
+            # Initialize the adapter with the base URL from environment
+            mcp.state.suno_client = SunoAdapter(
+                cookie=config.SUNO_COOKIE,
+                base_url=SUNO_API_BASE_URL
+            )
             # Perform an initial check (e.g., try refreshing token) to ensure auth works
             try:
                 await mcp.state.suno_client.refresh_token()

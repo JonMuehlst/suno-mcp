@@ -11,11 +11,18 @@ Requirements:
 - Node.js and npm
 
 Usage:
-    python setup_suno_api.py [--port PORT]
+    python setup_suno_api.py [--port PORT] [--install-only]
 
 Environment variables needed:
     SUNO_COOKIE: Your Suno cookie from suno.com
     TWOCAPTCHA_KEY: Your 2Captcha API key
+
+After running this script:
+1. The Suno API server will be running at http://localhost:PORT
+2. To use it with the Suno MCP server, set the BASE_URL in your .env file:
+   SUNO_API_BASE_URL=http://localhost:PORT
+3. Then run your MCP server with:
+   python -m src.main
 """
 
 import os
@@ -127,23 +134,56 @@ def run_server(repo_dir, port):
     print("Press Ctrl+C to stop the server")
     
     # Run the server
+    process = None
     try:
         process = subprocess.Popen(["npm", "run", "dev"], cwd=repo_dir, env=env)
         
         # Wait for server to start
+        print("Waiting for server to start...")
         time.sleep(5)
         
-        # Open the API test endpoint in browser
+        # Test the API endpoint
         test_url = f"http://localhost:{port}/api/get_limit"
-        print(f"Opening test endpoint: {test_url}")
+        print(f"Testing API endpoint: {test_url}")
+        
+        # Try to connect to the API for up to 30 seconds
+        max_attempts = 6
+        for attempt in range(max_attempts):
+            try:
+                import requests
+                import json
+                response = requests.get(test_url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if all(key in data for key in ["credits_left", "monthly_limit", "monthly_usage"]):
+                        print("\n✅ API is running successfully!")
+                        print(f"API Response: {json.dumps(data, indent=2)}")
+                        print("\nSuno API is ready to use with your MCP server.")
+                        break
+                    else:
+                        print(f"Warning: API response missing expected fields: {data}")
+                else:
+                    print(f"Attempt {attempt+1}/{max_attempts}: API returned status code {response.status_code}")
+            except requests.RequestException as e:
+                if attempt < max_attempts - 1:
+                    print(f"Attempt {attempt+1}/{max_attempts}: API not ready yet ({str(e)}). Retrying in 5 seconds...")
+                    time.sleep(5)
+                else:
+                    print(f"Error: Could not connect to API after {max_attempts} attempts.")
+                    print("The server might still be starting up. Check the browser or try again later.")
+        
+        # Open the API test endpoint in browser
+        print(f"Opening test endpoint in browser: {test_url}")
         webbrowser.open(test_url)
         
         # Keep the server running until interrupted
+        print("\nServer is running. Press Ctrl+C to stop.")
         process.wait()
     except KeyboardInterrupt:
         print("\nStopping server...")
-        process.terminate()
-        process.wait()
+        if process:
+            process.terminate()
+            process.wait()
     except Exception as e:
         print(f"Error running server: {e}")
         if process:
@@ -154,6 +194,7 @@ def main():
     """Main function to set up and run the Suno API server."""
     parser = argparse.ArgumentParser(description="Set up and run the Suno API server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port to run the server on (default: {DEFAULT_PORT})")
+    parser.add_argument("--install-only", action="store_true", help="Install dependencies but don't run the server")
     args = parser.parse_args()
     
     print("=== Suno API Setup and Run ===")
@@ -161,6 +202,14 @@ def main():
     # Check requirements
     if not check_requirements():
         sys.exit(1)
+    
+    # Check for requests package
+    try:
+        import requests
+    except ImportError:
+        print("Installing requests package for API testing...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+        print("Requests package installed successfully.")
     
     # Check environment variables
     if not check_env_vars():
@@ -183,6 +232,12 @@ def main():
         
         # Install dependencies
         install_dependencies(repo_dir)
+        
+        # If install-only flag is set, exit after installation
+        if args.install_only:
+            print("\n✅ Installation complete!")
+            print(f"To run the server later, use: python {sys.argv[0]} --port {args.port}")
+            sys.exit(0)
         
         # Run server
         run_server(repo_dir, args.port)
