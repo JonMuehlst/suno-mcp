@@ -14,8 +14,12 @@ async def test_server():
     """
     try:
         # Import the MCP server instance directly from your module
-        from src.main import mcp
+        from src.main import mcp, init_suno_client
         print("Successfully imported MCP server from src.main")
+        
+        # Initialize the Suno client before testing
+        print("Initializing Suno client for testing...")
+        await init_suno_client()
         
         # Initialize the client with the FastMCP instance
         print("Connecting to MCP server...")
@@ -35,10 +39,17 @@ async def test_server():
                         {"prompt": "Test prompt: short happy melody", "instrumental": True}
                     )
                     print(f"Tool execution successful!")
+                    
+                    # Handle different response formats
                     if hasattr(result, 'content') and result.content:
                         print(f"Response: {result.content[0].text[:100]}...")
+                    elif hasattr(result, 'text'):
+                        print(f"Response: {result.text[:100]}...")
+                    elif isinstance(result, str):
+                        print(f"Response: {result[:100]}...")
                     else:
-                        print("Tool returned empty or unexpected response format")
+                        print(f"Response type: {type(result)}")
+                        print(f"Response details: {result}")
                 except Exception as e:
                     print(f"Error calling tool: {e}")
             else:
