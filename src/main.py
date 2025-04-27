@@ -328,14 +328,36 @@ if __name__ == "__main__":
     # and Claude Desktop will manage running the server process.
 
     # To run directly (e.g., python src/main.py):
-    # Note: This uses stdio transport by default.
-    # You might need to configure host/port if running as a standalone web service.
+    # By default, this will use HTTP transport on port 8000 when run directly,
+    # but will use stdio transport when run by Claude Desktop.
+    import sys
     try:
-        mcp.run() # This blocks until the server is stopped
+        # Check for transport arguments
+        if "--transport" in sys.argv:
+            transport_idx = sys.argv.index("--transport")
+            if transport_idx + 1 < len(sys.argv):
+                transport = sys.argv[transport_idx + 1]
+                port = 8000  # Default port
+                
+                # Check for port argument
+                if "--port" in sys.argv:
+                    port_idx = sys.argv.index("--port")
+                    if port_idx + 1 < len(sys.argv):
+                        port = int(sys.argv[port_idx + 1])
+                
+                mcp.run(transport=transport, port=port)
+            else:
+                print("Missing transport value after --transport")
+                sys.exit(1)
+        else:
+            # Default: HTTP on port 8000 for direct execution
+            mcp.run(transport="sse", port=8000)
     except Exception as e:
         print(f"Server failed to start or crashed: {e}")
         import traceback
         traceback.print_exc()
 
-    # Example command to test installation with Claude Desktop:
-    # mcp install src/main.py --name "Suno Music Gen" -f .env
+    # Example commands to test:
+    # HTTP mode: python -m src.main --transport sse --port 8000
+    # IO mode: python -m src.main --transport stdio
+    # Claude Desktop: mcp install src/main.py --name "Suno Music Gen" -f .env

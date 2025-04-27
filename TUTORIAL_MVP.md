@@ -131,7 +131,59 @@ You can now use the `@suno` command in Claude Desktop.
 
 Claude will process the request using your local server, and the generated audio should appear in the chat interface shortly after.
 
-## 4. Common Troubleshooting Tips
+## 4. Testing Your Server Setup
+
+Before using the server with Claude Desktop, you can verify that it's running correctly using the included test script:
+
+```bash
+# Run the server in one terminal (HTTP mode on port 8000)
+python -m src.main
+
+# In another terminal, run the test script
+python manual_server_check.py
+```
+
+If the server is running correctly, you should see:
+```
+Testing MCP server availability at http://localhost:8000/health...
+✅ Success! MCP server is running (Status code: 200)
+```
+
+If you're using a different port or endpoint, you can specify it:
+```bash
+python manual_server_check.py http://localhost:5000/health
+```
+
+### Understanding MCP Server Transport Modes
+
+The MCP server can run in two primary transport modes:
+
+1. **HTTP Mode** (default for testing): When you run `python -m src.main` directly, the server starts in HTTP mode on port 8000 by default. This is what the manual_server_check.py script checks.
+
+2. **IO Mode** (used by Claude Desktop): When Claude Desktop launches the server via the configuration in `claude_desktop_config.json`, it runs in IO mode (stdio), which means it communicates through standard input/output streams rather than HTTP. This is why you don't need to specify a port in the Claude Desktop configuration.
+
+You can explicitly control the transport mode when running the server directly:
+
+```bash
+# Run in HTTP mode (for testing)
+python -m src.main --transport http --port 8000
+
+# Run in IO mode (simulates how Claude Desktop runs it)
+python -m src.main --transport stdio
+```
+
+### Recommended Testing Method: Using the FastMCP Client
+
+The most reliable way to test your MCP server is using the built-in FastMCP Client, which works with both transport modes:
+
+```bash
+# Run the client-based test script
+python test_mcp_client.py
+```
+
+This approach directly connects to your MCP server using the same mechanisms that Claude Desktop uses, providing a more accurate test of your server's functionality.
+
+## 5. Common Troubleshooting Tips
 
 *   **No Hammer Icon (🔨) in Claude:**
     *   **Restart Claude:** Did you fully restart Claude Desktop after editing the config file?
@@ -139,6 +191,12 @@ Claude will process the request using your local server, and the generated audio
         *   Is the `"command"` path to Python (especially if using a venv) correct?
         *   Is the `"args"` value correct? If using `["-m", "src.main"]`, Claude Desktop must be running from your project's root directory. If that's not working, try using the full path to main.py instead: `["C:\\path\\to\\your\\project\\src\\main.py"]`.
         *   Syntax errors in the JSON can also prevent loading.
+        *   **Transport Mode Note:** Remember that Claude Desktop uses IO mode (stdio) to communicate with the server, not HTTP. The test script checks HTTP connectivity (port 8000), which confirms your server code is working, but Claude Desktop connects differently.
+    *   **Test Server Directly:** Use the included test script to verify your server is running correctly:
+        ```bash
+        python manual_server_check.py
+        ```
+        This will check if the server is accessible via HTTP (port 8000) and help diagnose connection issues.
     *   **Run Manually:** Open your terminal, activate your virtual environment (if used), navigate to the project root directory, and run the command from your config file manually: `python -m src.main`. Does it start without errors? Watch the terminal output for clues. Fix any errors reported there.
     *   **Check `.env`:** Ensure the `.env` file exists in the project root and `SUNO_COOKIE` is set. The server might fail to start if the cookie is missing.
 *   **Errors During Song Generation:**
