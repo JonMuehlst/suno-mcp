@@ -15,6 +15,10 @@ from mcp.server.fastmcp import FastMCP, Context, Resource # Updated import
 # ToolInputSchema/ToolParameter are not needed if using docstrings for schema generation
 # from mcp.server.models import ToolInputSchema, ToolParameter
 
+from src import config # Loads .env automatically
+from src.suno_api import SunoAdapter, SunoApiException
+from src.audio_handler import download_audio # Updated import
+
 # Create the MCP instance at module level so it can be imported by tests
 mcp = FastMCP(
     name="Suno AI Music Generator",
@@ -22,10 +26,6 @@ mcp = FastMCP(
     description="Generates music using the Suno AI API via MCP.",
     # Dependencies are managed via requirements.txt
 )
-
-from src import config # Loads .env automatically
-from src.suno_api import SunoAdapter, SunoApiException
-from src.audio_handler import download_audio # Updated import
 
 # --- MCP Server Setup ---
 # FastMCP server is initialized at module level above
