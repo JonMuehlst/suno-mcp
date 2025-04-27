@@ -1,22 +1,25 @@
-"""Utilities for handling audio data, e.g., downloading, format conversion."""
+"""Minimal audio handling utility for downloading audio."""
 
 import httpx
-from pydub import AudioSegment
 import io
-import os
-from typing import Optional
+import mimetypes
+from typing import Optional, Tuple
 
-async def download_audio(url: str, output_path: Optional[str] = None) -> Optional[io.BytesIO]:
+# Add common audio types if not recognized by default
+mimetypes.add_type("audio/mpeg", ".mp3")
+mimetypes.add_type("audio/ogg", ".ogg")
+mimetypes.add_type("audio/wav", ".wav")
+
+async def download_audio(url: str) -> Optional[Tuple[io.BytesIO, str]]:
     """
-    Downloads audio from a URL.
+    Downloads audio from a URL and returns it as BytesIO with its MIME type.
 
     Args:
         url: The URL of the audio file (e.g., MP3 from Suno).
-        output_path: Optional path to save the downloaded file. If None, returns BytesIO.
 
     Returns:
-        An io.BytesIO object containing the audio data if output_path is None,
-        otherwise None. Returns None on download failure.
+        A tuple containing (io.BytesIO object with audio data, MIME type string)
+        or None if download fails.
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -26,15 +29,23 @@ async def download_audio(url: str, output_path: Optional[str] = None) -> Optiona
             print("Download successful.")
 
             audio_data = io.BytesIO(response.content)
+            audio_data.seek(0) # Reset buffer position for reading
 
-            if output_path:
-                print(f"Saving audio to: {output_path}")
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(audio_data.getvalue())
-                return None # Indicate file saved, no BytesIO returned
+            # Determine MIME type from URL or response headers
+            mime_type, _ = mimetypes.guess_type(url)
+            if not mime_type and 'content-type' in response.headers:
+                 # Fallback to Content-Type header
+                 mime_type = response.headers['content-type'].split(';')[0].strip()
+
+            # Default to audio/mpeg if still unknown (common for Suno)
+            if not mime_type:
+                print("Warning: Could not determine MIME type, defaulting to audio/mpeg.")
+                mime_type = "audio/mpeg"
             else:
-                return audio_data # Return in-memory data
+                 print(f"Determined MIME type: {mime_type}")
+
+
+            return audio_data, mime_type
 
     except httpx.HTTPStatusError as e:
         print(f"HTTP error downloading audio from {url}: {e.response.status_code} - {e.response.text}")
@@ -43,63 +54,28 @@ async def download_audio(url: str, output_path: Optional[str] = None) -> Optiona
         print(f"Error downloading audio from {url}: {e}")
         return None
 
-def convert_audio(input_data: io.BytesIO, target_format: str = "wav", source_format: str = "mp3") -> Optional[io.BytesIO]:
-    """
-    Converts audio data from one format to another using pydub.
-    Requires ffmpeg or libav to be installed and in the system PATH.
-
-    Args:
-        input_data: BytesIO object containing the source audio data.
-        target_format: The desired output format (e.g., "wav", "ogg").
-        source_format: The format of the input data (e.g., "mp3").
-
-    Returns:
-        A BytesIO object with the converted audio data, or None if conversion fails.
-    """
-    try:
-        print(f"Converting audio from {source_format} to {target_format}...")
-        # Ensure the input data buffer is reset
-        input_data.seek(0)
-        audio = AudioSegment.from_file(input_data, format=source_format)
-
-        output_data = io.BytesIO()
-        audio.export(output_data, format=target_format)
-        output_data.seek(0) # Reset buffer position for reading
-        print("Conversion successful.")
-        return output_data
-    except Exception as e:
-        # pydub often raises generic Exceptions, especially if ffmpeg is missing
-        print(f"Error converting audio: {e}")
-        print("Ensure ffmpeg or libav is installed and accessible in your PATH.")
-        return None
-
-# Example Usage
-async def example_download_and_convert():
+# Example Usage (can be run directly if needed)
+async def example_download():
     # Replace with a valid Suno audio URL after generation
-    test_audio_url = "https://cdn1.suno.ai/..." # Replace with actual URL
+    # Example MP3 URL structure (replace ... with actual ID)
+    test_audio_url = "https://cdn1.suno.ai/audio_prompt/..." # Replace with actual URL
 
     if "..." in test_audio_url:
         print("Skipping example: Replace test_audio_url with a real URL.")
         return
 
-    # 1. Download MP3
-    mp3_data = await download_audio(test_audio_url)
+    result = await download_audio(test_audio_url)
 
-    if mp3_data:
-        # 2. Convert MP3 to WAV
-        wav_data = convert_audio(mp3_data, target_format="wav", source_format="mp3")
-
-        if wav_data:
-            print("Successfully downloaded MP3 and converted to WAV (in memory).")
-            # You could save the WAV data here if needed:
-            # with open("output.wav", "wb") as f:
-            #     f.write(wav_data.getvalue())
-        else:
-            print("Downloaded MP3, but failed to convert to WAV.")
-
-        # Example: Save directly during download
-        await download_audio(test_audio_url, output_path="downloaded_audio.mp3")
-
+    if result:
+        audio_bytes_io, mime = result
+        print(f"Successfully downloaded audio (in memory). MIME type: {mime}")
+        print(f"Audio size: {len(audio_bytes_io.getvalue())} bytes")
+        # Example: Save the downloaded file
+        # save_format = mime.split('/')[-1] # e.g., 'mpeg' -> use 'mp3' maybe?
+        # filename = f"downloaded_audio.{'mp3' if save_format == 'mpeg' else save_format}"
+        # with open(filename, "wb") as f:
+        #     f.write(audio_bytes_io.getvalue())
+        # print(f"Saved audio to {filename}")
     else:
         print("Failed to download audio.")
 
@@ -107,5 +83,5 @@ async def example_download_and_convert():
 if __name__ == "__main__":
     import asyncio
     # Note: Running this requires a valid audio URL.
-    # asyncio.run(example_download_and_convert())
-    print("Audio handler module loaded. Run example_download_and_convert() with a valid URL for testing.")
+    # asyncio.run(example_download())
+    print("Minimal audio handler module loaded. Run example_download() with a valid URL for testing.")

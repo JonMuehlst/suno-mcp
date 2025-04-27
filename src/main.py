@@ -7,12 +7,15 @@ generation capabilities to compatible clients like Claude Desktop.
 
 import asyncio
 import traceback
+import asyncio
+import traceback
+import io # Added for type hinting if needed elsewhere
 from mcp.server.fastmcp import FastMCP, Context, Image
 from mcp.server.models import ToolInputSchema, ToolParameter
 
 from src import config # Loads .env automatically
-from src.suno_api import SunoAdapter, SunoApiException # Changed import
-from src.audio_handler import download_audio, convert_audio
+from src.suno_api import SunoAdapter, SunoApiException
+from src.audio_handler import download_audio # Updated import
 
 # --- MCP Server Setup ---
 # Initialize FastMCP server
@@ -95,16 +98,16 @@ async def generate_music_tool(
     title: str | None = None,
     # custom_lyrics: str | None = None, # Custom lyrics mode not implemented in minimal adapter
     ctx: Context | None = None # Context object provided by FastMCP
-) -> str | Image: # Return text description or Image object
+) -> str | Image: # Return text description or MCP Image object containing audio
     """MCP Tool function to generate music."""
     if not ctx:
-         return "Error: MCP Context not available."
+        return "Error: MCP Context not available."
 
     lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.suno_client:
         return "Error: Suno API adapter is not initialized. Check server logs and configuration."
 
-    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type hint updated
+    suno_client: SunoAdapter = lifespan_ctx.suno_client
 
     await ctx.info(f"Received music generation request: '{prompt}' (Instrumental: {instrumental}, Style: {style_tags}, Title: {title})")
 
@@ -176,28 +179,28 @@ async def generate_music_tool(
             await ctx.error(f"Failed to download audio for clip {clip_id} from {audio_url}")
             return f"Failed to download audio for clip {clip_id}."
 
-        # MCP Image type supports common formats, let's try returning MP3 directly
-        # If Claude Desktop has issues, we might need to convert to WAV/OGG
-        # image = Image(data=audio_data_mp3.getvalue(), format="mp3", description=f"Generated Music: {clip_title}")
+        # Download the audio using the new handler
+        # download_audio now returns a tuple: (BytesIO, mime_type) or None
+        download_result = await download_audio(audio_url)
 
-        # Let's convert to WAV for potentially wider compatibility in clients
-        await ctx.report_progress(90, 100, "Converting audio to WAV...") # Progress: 90%
-        audio_data_wav = convert_audio(audio_data_mp3, target_format="wav", source_format="mp3")
+        if not download_result:
+            await ctx.error(f"Failed to download audio for clip {clip_id} from {audio_url} using audio_handler.")
+            return f"Failed to download audio for clip {clip_id}."
 
-        if not audio_data_wav:
-             await ctx.error(f"Failed to convert audio for clip {clip_id} to WAV.")
-             # Fallback to returning MP3 URL? Or just fail? Let's fail for now.
-             return f"Failed download/convert audio for clip {clip_id}."
+        audio_data_bytes_io, audio_mime_type = download_result
 
+        await ctx.report_progress(95, 100, f"Audio downloaded ({audio_mime_type}). Preparing resource...") # Progress: 95%
 
+        # Create MCP Image object with raw audio bytes and MIME type
+        # The 'format' field in MCP Image corresponds to the MIME type here.
         image = Image(
-            data=audio_data_wav.getvalue(),
-            format="wav", # Use 'wav' format identifier
+            data=audio_data_bytes_io.getvalue(),
+            format=audio_mime_type, # Use the detected MIME type
             description=f"Generated Music: {clip_title} (ID: {clip_id})"
         )
 
         await ctx.report_progress(100, 100, "Audio ready.") # Progress: 100%
-        return image # Return the MCP Image object
+        return image # Return the MCP Image object containing the audio data
 
     except SunoApiException as e:
         await ctx.error(f"Suno API Error: {e}")
