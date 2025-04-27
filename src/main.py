@@ -6,11 +6,12 @@ generation capabilities to compatible clients like Claude Desktop.
 """
 
 import asyncio
+import traceback
 from mcp.server.fastmcp import FastMCP, Context, Image
 from mcp.server.models import ToolInputSchema, ToolParameter
 
 from src import config # Loads .env automatically
-from src.suno_api import SunoApi, SunoApiException
+from src.suno_api import SunoAdapter, SunoApiException # Changed import
 from src.audio_handler import download_audio, convert_audio
 
 # --- MCP Server Setup ---
@@ -31,41 +32,45 @@ mcp = FastMCP(
 )
 
 # --- Lifespan Management (Optional but Recommended) ---
-# Use lifespan to manage the SunoApi client lifecycle
+# Use lifespan to manage the SunoAdapter client lifecycle
 class ServerContext:
     def __init__(self):
-        self.suno_client: SunoApi | None = None
+        self.suno_client: SunoAdapter | None = None # Changed type hint
 
 @mcp.lifespan()
 async def lifespan_manager(server: FastMCP) -> asyncio.AsyncIterator[ServerContext]:
-    """Manages the SunoApi client lifecycle."""
-    print("MCP Server Lifespan: Initializing Suno API client...")
+    """Manages the SunoAdapter client lifecycle."""
+    print("MCP Server Lifespan: Initializing Suno API adapter...")
     app_context = ServerContext()
     try:
-        app_context.suno_client = SunoApi(cookie=config.SUNO_COOKIE)
-        # Perform an initial check, like getting credits, to ensure connection works
+        # Initialize the adapter
+        app_context.suno_client = SunoAdapter(cookie=config.SUNO_COOKIE)
+        # Perform an initial check (e.g., try refreshing token) to ensure auth works
         try:
-            credits = await app_context.suno_client.get_credits()
-            print(f"Suno client initialized successfully. Credits info: {credits}")
+            await app_context.suno_client.refresh_token()
+            print("Suno adapter initialized and token refreshed successfully.")
         except SunoApiException as e:
-            print(f"Warning: Initial check with Suno API failed: {e}")
+            print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
             # Decide if this should prevent startup? For now, just warn.
         except Exception as e:
-             print(f"Warning: Unexpected error during Suno client initialization: {e}")
+             print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
 
         yield app_context # Make client available to tools via ctx.request_context.lifespan_context
 
     except ValueError as e:
-        print(f"Error initializing Suno API client: {e}. Check SUNO_COOKIE.")
-        # Optionally raise to prevent server start if cookie is essential
-        # raise RuntimeError(f"Failed to initialize Suno API client: {e}") from e
-        # For now, allow server to start but client will be None
-        yield app_context # Yield even if client failed, tools should check
+        print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
+        # Allow server to start but client will be None, tools must check
+        yield app_context
+    except Exception as e:
+        print(f"Critical error during Suno adapter initialization: {e}")
+        traceback.print_exc()
+        # Yield context even on critical error, tools must handle None client
+        yield app_context
     finally:
         print("MCP Server Lifespan: Shutting down...")
         if app_context.suno_client:
             await app_context.suno_client.close()
-            print("Suno API client closed.")
+            print("Suno API adapter closed.")
 
 
 # --- MCP Tools ---
@@ -88,7 +93,7 @@ async def generate_music_tool(
     instrumental: bool = False,
     style_tags: str | None = None,
     title: str | None = None,
-    # custom_lyrics: str | None = None, # Re-enable when custom lyrics are better understood
+    # custom_lyrics: str | None = None, # Custom lyrics mode not implemented in minimal adapter
     ctx: Context | None = None # Context object provided by FastMCP
 ) -> str | Image: # Return text description or Image object
     """MCP Tool function to generate music."""
@@ -97,30 +102,44 @@ async def generate_music_tool(
 
     lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
     if not lifespan_ctx or not lifespan_ctx.suno_client:
-        return "Error: Suno API client is not initialized. Check server logs and configuration."
+        return "Error: Suno API adapter is not initialized. Check server logs and configuration."
 
-    suno_client = lifespan_ctx.suno_client
-    is_custom = False # Currently disabled
-    # is_custom = bool(custom_lyrics)
-    # generation_prompt = custom_lyrics if is_custom else prompt
+    suno_client: SunoAdapter = lifespan_ctx.suno_client # Type hint updated
 
-    await ctx.info(f"Received music generation request: '{prompt}' (Instrumental: {instrumental})")
+    await ctx.info(f"Received music generation request: '{prompt}' (Instrumental: {instrumental}, Style: {style_tags}, Title: {title})")
 
     try:
         await ctx.report_progress(0, 100, "Starting music generation...") # Progress: 0%
-        clips = await suno_client.generate_music(
-            prompt=prompt, # Use main prompt for description even in custom mode for now
-            tags=style_tags,
-            title=title,
-            is_custom=is_custom, # Pass custom flag
-            instrumental=instrumental,
-            wait_for_completion=True, # Wait for results
-            polling_interval=5
-        )
+
+        # Decide which adapter method to call based on provided parameters
+        # Use custom_generate if style_tags or title are provided, otherwise use generate
+        if style_tags or title:
+            await ctx.info("Using custom generation mode (tags/title provided).")
+            # Note: In Suno's custom mode, the 'prompt' usually contains lyrics.
+            # Here, we are passing the description as prompt, and style/title separately.
+            # This might not align perfectly with Suno's intended custom mode usage,
+            # but fits the adapter's current structure.
+            clips = await suno_client.custom_generate(
+                prompt=prompt, # Pass description as prompt
+                tags=style_tags,
+                title=title,
+                make_instrumental=instrumental,
+                wait_audio=True,
+                polling_interval=5
+            )
+        else:
+            await ctx.info("Using simple generation mode.")
+            clips = await suno_client.generate(
+                prompt=prompt,
+                make_instrumental=instrumental,
+                wait_audio=True,
+                polling_interval=5
+            )
+
         await ctx.report_progress(50, 100, "Generation request submitted, waiting for results...") # Progress: 50%
 
         if not clips:
-            await ctx.error("Music generation failed or returned no clips.")
+            await ctx.error("Music generation request succeeded but returned no clips.")
             return "Music generation failed or returned no clips."
 
         results = []
@@ -185,45 +204,10 @@ async def generate_music_tool(
         return f"Error during music generation: {e}"
     except Exception as e:
         await ctx.error(f"Unexpected Error: {e}")
-        import traceback
         traceback.print_exc() # Log full traceback to server console
         return f"An unexpected error occurred: {e}"
 
-
-@mcp.tool(
-    name="get_suno_credits",
-    description="Retrieves the current Suno AI credit balance.",
-    input_schema=ToolInputSchema(parameters=[]) # No input parameters
-)
-async def get_credits_tool(ctx: Context | None = None) -> str:
-    """MCP Tool function to get Suno credits."""
-    if not ctx:
-         return "Error: MCP Context not available."
-
-    lifespan_ctx: ServerContext = ctx.request_context.lifespan_context
-    if not lifespan_ctx or not lifespan_ctx.suno_client:
-        return "Error: Suno API client is not initialized. Check server logs and configuration."
-
-    suno_client = lifespan_ctx.suno_client
-    await ctx.info("Fetching Suno credits...")
-    try:
-        credits_info = await suno_client.get_credits()
-        # Format the response nicely
-        # Example structure: {'credits': 50, 'usage': 10, 'period': 'monthly', 'next_reset': '...'}
-        # Adjust formatting based on actual response structure
-        credits = credits_info.get('credits', 'N/A')
-        total_monthly_limit = credits_info.get('monthly_limit', 'N/A')
-        monthly_usage = credits_info.get('monthly_usage', 'N/A')
-        response_str = f"Suno Credits: {credits} remaining. Monthly Usage: {monthly_usage}/{total_monthly_limit}."
-        await ctx.info(f"Credits fetched: {response_str}")
-        return response_str
-    except SunoApiException as e:
-        await ctx.error(f"Suno API Error fetching credits: {e}")
-        return f"Error fetching credits: {e}"
-    except Exception as e:
-        await ctx.error(f"Unexpected Error fetching credits: {e}")
-        return f"An unexpected error occurred while fetching credits: {e}"
-
+# --- Removed get_suno_credits tool as it's not part of the minimal adapter ---
 
 # --- Main Execution ---
 if __name__ == "__main__":
