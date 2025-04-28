@@ -234,6 +234,7 @@ class SunoAdapter:
 
     async def _generate_request(
         self,
+        endpoint: str, # Added endpoint parameter
         payload: Dict[str, Any],
         wait_audio: bool = True,
         polling_interval: int = 5,
@@ -241,7 +242,7 @@ class SunoAdapter:
     ) -> List[Dict[str, Any]]:
         """Internal helper to make generation request and handle polling."""
         # Use endpoint without trailing slash to avoid 308 redirect on local server
-        endpoint = "/api/generate/v2"
+        # endpoint = "/api/generate/v2" # Removed hardcoded endpoint
         logger.info(f"Submitting generation request to {endpoint} with payload: {payload}")
 
         # The _request method handles CAPTCHA reactively if a 402 is returned.
@@ -355,7 +356,8 @@ class SunoAdapter:
             "make_instrumental": make_instrumental,
             # "token": None # CAPTCHA token added by _request if needed
         }
-        return await self._generate_request(payload, wait_audio, polling_interval, timeout)
+        # Pass the correct endpoint for simple generation
+        return await self._generate_request("/api/generate", payload, wait_audio, polling_interval, timeout)
 
     async def custom_generate(
         self,
@@ -395,7 +397,8 @@ class SunoAdapter:
         }
         # Clean payload from None values
         payload = {k: v for k, v in payload.items() if v is not None}
-        return await self._generate_request(payload, wait_audio, polling_interval, timeout)
+        # Pass the correct endpoint for custom generation
+        return await self._generate_request("/api/custom_generate", payload, wait_audio, polling_interval, timeout)
 
     async def get(self, ids: List[str]) -> List[Dict[str, Any]]:
         """
@@ -414,14 +417,15 @@ class SunoAdapter:
         ids_param = ",".join(ids)
         try:
             # Use attempt_captcha_solve=False as GET requests shouldn't require CAPTCHA
-            response_data = await self._request("GET", f"/api/feed/v2?ids={ids_param}", attempt_captcha_solve=False)
+            # Use the /api/get endpoint as per gcui-art/suno-api docs
+            response_data = await self._request("GET", f"/api/get?ids={ids_param}", attempt_captcha_solve=False)
 
-            # The v2 endpoint returns a list directly
+            # The /api/get endpoint returns a list directly
             if isinstance(response_data, list):
                  # Filter results to only include requested IDs, as API might return extras
                  return [clip for clip in response_data if clip.get("id") in ids]
             else:
-                 logger.warning(f"Unexpected response format from /api/feed/v2: {response_data}")
+                 logger.warning(f"Unexpected response format from /api/get: {response_data}")
                  return []
 
         except SunoApiException as e:
