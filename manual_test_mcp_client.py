@@ -1,6 +1,16 @@
 """
-Test script for verifying the Suno MCP server is operational using the FastMCP Client.
-This script directly connects to the MCP server and calls a simple tool to verify functionality.
+Test script for verifying the Suno MCP server's internal logic using the FastMCP Client.
+
+This script imports the MCP instance directly from src.main and runs it *in-process*.
+It does NOT connect to an external HTTP server. It tests the tool registration and
+basic functionality by interacting with the MCP object directly.
+
+Usage:
+Run this script directly from the project root directory:
+   python manual_test_mcp_client.py
+
+It will initialize the necessary components (like the Suno client) and attempt
+to call the 'generate_song' tool internally.
 """
 
 import asyncio

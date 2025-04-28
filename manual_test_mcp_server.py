@@ -1,6 +1,17 @@
 """
-Simple script to test if the Suno MCP server is running properly.
-This script checks if the server is accessible via HTTP.
+Simple script to test if the Suno MCP server is running properly via HTTP.
+
+This script checks if an *already running* MCP server is accessible via HTTP.
+It does NOT start the server itself.
+
+Usage:
+1. Start the MCP server in HTTP mode in one terminal:
+   python -m src.main --http
+   (Ensure it's running on the expected host/port, default is localhost:8000)
+
+2. Run this script in another terminal:
+   python manual_test_mcp_server.py [URL]
+   (If URL is omitted, it defaults to http://localhost:8000/health)
 """
 
 import subprocess
