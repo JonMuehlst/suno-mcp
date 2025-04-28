@@ -343,6 +343,65 @@ registered_tools.add("generate_song")
 registered_tools.add("custom_generate_song")
 registered_resource_handlers.add("suno")
 
+# --- Initialization and Cleanup ---
+
+async def init_suno_client():
+    """Initialize the Suno API adapter.
+
+    Note: This requires a self-hosted Suno API server using gcui-art/suno-api
+        See: https://github.com/gcui-art/suno-api for setup instructions
+    """
+    print("Initializing Suno API adapter...")
+    mcp.state.suno_client = None
+    try:
+        # Check if we're in a test environment or if the API URL is not valid
+        parsed_url = urlparse(SUNO_API_BASE_URL)
+        if not parsed_url.netloc or "localhost" not in parsed_url.netloc and "127.0.0.1" not in parsed_url.netloc:
+            print(f"Warning: Using mock Suno client as API URL {SUNO_API_BASE_URL} is not valid")
+            # Create a minimal mock client for testing
+            class MockSunoAdapter:
+                async def close(self):
+                    pass
+                async def refresh_token(self):
+                    pass
+                async def generate(self, *args, **kwargs):
+                    return [{"id": "test-song-id-123", "title": "Test Happy Melody", "status": "complete"}]
+                async def custom_generate(self, *args, **kwargs):
+                    return [{"id": "test-custom-song-id-456", "title": "Test Custom Song", "status": "complete"}]
+                async def get(self, ids):
+                    return [{"id": ids[0], "title": "Test Song", "status": "complete", "audio_url": "https://example.com/test.mp3"}]
+        
+            mcp.state.suno_client = MockSunoAdapter()
+            print("Mock Suno adapter initialized for testing.")
+            return
+        
+        # Initialize the adapter with the base URL from environment
+        mcp.state.suno_client = SunoAdapter(
+            cookie=config.SUNO_COOKIE,
+            base_url=SUNO_API_BASE_URL
+        )
+        # Perform an initial check (e.g., try refreshing token) to ensure auth works
+        try:
+            await mcp.state.suno_client.refresh_token()
+            print("Suno adapter initialized and token refreshed successfully.")
+        except SunoApiException as e:
+            print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
+            # Decide if this should prevent startup? For now, just warn.
+        except Exception as e:
+            print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
+    except ValueError as e:
+        print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
+    except Exception as e:
+        print(f"Critical error during Suno adapter initialization: {e}")
+        traceback.print_exc()
+
+async def cleanup_suno_client():
+    """Clean up the Suno API adapter."""
+    print("MCP Server Lifespan: Shutting down...")
+    if hasattr(mcp, 'state') and mcp.state.suno_client: # Check if state exists
+        await mcp.state.suno_client.close()
+        print("Suno API adapter closed.")
+
 # --- Main Execution ---
 if __name__ == "__main__":
     print("Starting Suno AI MCP Server...")
@@ -351,74 +410,15 @@ if __name__ == "__main__":
     # For Claude Desktop, you'll use `mcp install src/main.py`
     # and Claude Desktop will manage running the server process.
 
-    # Initialize the Suno client before starting the server
-    async def init_suno_client():
-        """Initialize the Suno API adapter.
-    
-        Note: This requires a self-hosted Suno API server using gcui-art/suno-api
-        See: https://github.com/gcui-art/suno-api for setup instructions
-        """
-        print("Initializing Suno API adapter...")
-        mcp.state.suno_client = None
-        try:
-            # Check if we're in a test environment or if the API URL is not valid
-            parsed_url = urlparse(SUNO_API_BASE_URL)
-            if not parsed_url.netloc or "localhost" not in parsed_url.netloc and "127.0.0.1" not in parsed_url.netloc:
-                print(f"Warning: Using mock Suno client as API URL {SUNO_API_BASE_URL} is not valid")
-                # Create a minimal mock client for testing
-                class MockSunoAdapter:
-                    async def close(self):
-                        pass
-                    async def refresh_token(self):
-                        pass
-                    async def generate(self, *args, **kwargs):
-                        return [{"id": "test-song-id-123", "title": "Test Happy Melody", "status": "complete"}]
-                    async def custom_generate(self, *args, **kwargs):
-                        return [{"id": "test-custom-song-id-456", "title": "Test Custom Song", "status": "complete"}]
-                    async def get(self, ids):
-                        return [{"id": ids[0], "title": "Test Song", "status": "complete", "audio_url": "https://example.com/test.mp3"}]
-            
-                mcp.state.suno_client = MockSunoAdapter()
-                print("Mock Suno adapter initialized for testing.")
-                return
-            
-            # Initialize the adapter with the base URL from environment
-            mcp.state.suno_client = SunoAdapter(
-                cookie=config.SUNO_COOKIE,
-                base_url=SUNO_API_BASE_URL
-            )
-            # Perform an initial check (e.g., try refreshing token) to ensure auth works
-            try:
-                await mcp.state.suno_client.refresh_token()
-                print("Suno adapter initialized and token refreshed successfully.")
-            except SunoApiException as e:
-                print(f"Warning: Initial token refresh for Suno adapter failed: {e}")
-                # Decide if this should prevent startup? For now, just warn.
-            except Exception as e:
-                print(f"Warning: Unexpected error during Suno adapter initialization: {e}")
-        except ValueError as e:
-            print(f"Error initializing Suno API adapter: {e}. Check SUNO_COOKIE.")
-        except Exception as e:
-            print(f"Critical error during Suno adapter initialization: {e}")
-            traceback.print_exc()
-
-    # Cleanup function to be called on shutdown
-    async def cleanup_suno_client():
-        """Clean up the Suno API adapter."""
-        print("MCP Server Lifespan: Shutting down...")
-        if mcp.state.suno_client:
-            await mcp.state.suno_client.close()
-            print("Suno API adapter closed.")
-
     # To run directly (e.g., python src/main.py):
     # By default, this will use HTTP transport on port 8000 when run directly,
     # but will use stdio transport when run by Claude Desktop.
     import sys
     import asyncio
-    
+
     # Initialize the client before starting the server
     asyncio.run(init_suno_client())
-    
+
     try:
         # Check for transport arguments
         if "--transport" in sys.argv:
