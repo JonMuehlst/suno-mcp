@@ -57,7 +57,8 @@ class SunoAdapter:
 
         # Initial token from config (if available), will be refreshed
         self._token: Optional[str] = getattr(config, 'SUNO_TOKEN', None)
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
+        # Explicitly enable redirects, although it's the default
+        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0, follow_redirects=True)
         # Mimic headers observed in TS code/browser requests
         self._client.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36", # Example modern UA
@@ -239,7 +240,8 @@ class SunoAdapter:
         timeout: int = 300
     ) -> List[Dict[str, Any]]:
         """Internal helper to make generation request and handle polling."""
-        endpoint = "/api/generate/v2/"
+        # Use endpoint without trailing slash to avoid 308 redirect on local server
+        endpoint = "/api/generate/v2"
         logger.info(f"Submitting generation request to {endpoint} with payload: {payload}")
 
         # The _request method handles CAPTCHA reactively if a 402 is returned.
