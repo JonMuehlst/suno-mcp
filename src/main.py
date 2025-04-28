@@ -89,7 +89,8 @@ async def generate_song(
     await ctx.info(f"Received simple generation request: '{prompt}' (Instrumental: {instrumental})")
 
     try:
-        await ctx.report_progress(0, 100, "Starting simple generation...") # Progress: 0%
+        await ctx.info("Starting simple generation...")
+        await ctx.report_progress(0, 100) # Progress: 0%
 
         # For testing purposes, return a mock response if the API URL is not valid
         parsed_url = urlparse(SUNO_API_BASE_URL)
@@ -105,7 +106,8 @@ async def generate_song(
             polling_interval=5
         )
 
-        await ctx.report_progress(50, 100, "Waiting for Suno generation...") # Progress: 50%
+        await ctx.info("Waiting for Suno generation...")
+        await ctx.report_progress(50, 100) # Progress: 50%
 
         if not clips:
             await ctx.error("Suno request succeeded but returned no clips.")
@@ -130,7 +132,8 @@ async def generate_song(
 
 
         await ctx.info(f"Successfully generated clip '{clip_title}' (ID: {clip_id}).")
-        await ctx.report_progress(100, 100, "Generation complete.") # Progress: 100%
+        await ctx.info("Generation complete.")
+        await ctx.report_progress(100, 100) # Progress: 100%
 
         # Return text description with the resource URI
         return f"Generated song: '{clip_title}'.\nPlay it using the resource URI: suno://{clip_id}"
@@ -183,7 +186,8 @@ async def custom_generate_song(
     await ctx.debug(f"Lyrics: {lyrics[:100]}...") # Log start of lyrics
 
     try:
-        await ctx.report_progress(0, 100, "Starting custom generation...") # Progress: 0%
+        await ctx.info("Starting custom generation...")
+        await ctx.report_progress(0, 100) # Progress: 0%
 
         # For testing purposes, return a mock response if the API URL is not valid
         parsed_url = urlparse(SUNO_API_BASE_URL)
